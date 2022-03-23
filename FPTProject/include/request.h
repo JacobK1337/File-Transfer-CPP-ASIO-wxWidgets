@@ -9,24 +9,24 @@ struct request_code
 	//Enum class representing defined FTP operation codes.
 	enum class operation_types : uint32_t
 	{
-		//operations from client
+		//FTP operations
 		STOR,
 		DELE,
 		RETR,
-		PWD,
 		LS,
 		CD,
 
-		//requests
-		ASSIGN_DATA_CONNECTION,
+		//verification
+		COLLECT_DATA,
 
-		//server responses
-		REQUEST_ACCEPT,
-		BAD_REQUEST
+		//server verification responses
+		SERVER_OK,
+		SERVER_ERROR
 	};
 
 	operation_types operation;
 	uint64_t request_size = 0;
+
 };
 
 namespace request_code_mapping
@@ -35,7 +35,6 @@ namespace request_code_mapping
 		{"stor", request_code::operation_types::STOR},
 		{"dele", request_code::operation_types::DELE},
 		{"retr", request_code::operation_types::RETR},
-		{"pwd", request_code::operation_types::PWD},
 		{"ls", request_code::operation_types::LS},
 		{"cd", request_code::operation_types::CD}
 	};
@@ -50,6 +49,9 @@ struct request
 	std::shared_ptr<ftp_connection> sender = nullptr;
 
 	//std::vector<uint8_t> request_body_cache;
+
+	request() = default;
+
 
 	void AssignSender(std::shared_ptr<ftp_connection> t_sender)
 	{
@@ -146,7 +148,7 @@ public:
 
 		auto occur = string_to_operation.find(user_command);
 
-		return occur != string_to_operation.end() ? occur->second : request_code::operation_types::BAD_REQUEST;
+		return occur->second;
 	}
 
 	static request PrepareRequest(request_code::operation_types resolved_operation, std::vector<std::string>& user_command_tokenized)
@@ -177,7 +179,7 @@ private:
 		{
 			std::cout << "Invalid arguments \n";
 			request req;
-			req.request_header.operation = request_code::operation_types::BAD_REQUEST;
+			//req.request_header.operation = request_code::operation_types::BAD_REQUEST;
 			return req;
 		}
 
@@ -211,7 +213,7 @@ private:
 		{
 			std::cout << "Invalid arguments \n";
 			request req;
-			req.request_header.operation = request_code::operation_types::BAD_REQUEST;
+			//req.request_header.operation = request_code::operation_types::BAD_REQUEST;
 			return req;
 		}
 

@@ -5,15 +5,14 @@
 #include<filesystem>
 #include"ftpconnection.h"
 #include<fstream>
+
+
 class ftp_server
 {
 
 private:
-	std::deque<request> m_receivedControlRequests;
-	std::deque<request> m_receivedDataRequests;
-	//
-	std::deque<std::shared_ptr<ftp_connection>> m_establishedControlConnections;
-	std::deque<std::shared_ptr<ftp_connection>> m_establishedDataConnections;
+	std::deque<request> m_received_requests;
+	std::deque<std::shared_ptr<ftp_connection>> m_established_connections;
 
 	asio::io_context m_serverContext;
 	std::thread m_threadServerContext;
@@ -21,9 +20,11 @@ private:
 	asio::ip::tcp::acceptor m_serverAcceptor;
 
 	uint32_t m_clientIdCounter = 1000;
-	ftp_connection::conn_type m_newConnectionType = ftp_connection::conn_type::control;
-	std::string default_server_path = "C:/Users/kubcz/Desktop";
+	//ftp_connection::conn_type m_newConnectionType; 
+	std::string default_server_path = std::filesystem::current_path().string();
 	
+
+	std::map<unsigned long, request> data_request_details;
 
 public:
 	ftp_server(uint16_t port)
@@ -74,63 +75,31 @@ public:
 		m_serverAcceptor.async_accept(
 			[this](std::error_code ec, asio::ip::tcp::socket socket) -> void
 			{
-				if(!ec)
+				if (!ec)
 				{
 
 					std::cout << "[SERVER] New connection on: " << socket.remote_endpoint() << "\n";
 
-					switch(m_newConnectionType)
+					std::shared_ptr<ftp_connection> new_connection =
+						std::make_shared<ftp_connection>(
+							ftp_connection::conn_type::server_remote,
+							ftp_connection::conn_founder::server,
+							std::move(socket),
+							m_serverContext,
+							m_received_requests
+							);
+
+					if (OnConnectionEstablish(new_connection))
 					{
+						m_established_connections.push_back(std::move(new_connection));
+						m_established_connections.back()->ListenToClient(m_clientIdCounter++);
 
-					case ftp_connection::conn_type::control:
-						{
-						std::shared_ptr<ftp_connection> new_control_con =
-							std::make_shared<ftp_connection>(
-								ftp_connection::conn_type::control,
-								ftp_connection::conn_founder::server,
-								std::move(socket),
-								m_serverContext,
-								m_receivedControlRequests
-								);
-
-						if (OnControlConnectionEstablish(new_control_con))
-						{
-							m_establishedControlConnections.push_back(std::move(new_control_con));
-							m_establishedControlConnections.back()->ListenToClient(m_clientIdCounter++);
-
-							std::cout << "[" << m_establishedControlConnections.back()->GetId() << "] Connection approved! \n";
-						}
-
-						else
-							std::cout << "Connection denied \n";
-
-						break;
-						}
-					case ftp_connection::conn_type::data:
-						{
-						std::shared_ptr<ftp_connection> new_data_con =
-							std::make_shared<ftp_connection>(
-								ftp_connection::conn_type::data,
-								ftp_connection::conn_founder::server,
-								std::move(socket),
-								m_serverContext,
-								m_receivedDataRequests
-								);
-
-						if (OnDataConnectionEstablish(new_data_con))
-						{
-							m_establishedDataConnections.push_back(std::move(new_data_con));
-							m_establishedDataConnections.back()->ListenToClient(m_clientIdCounter++);
-
-							std::cout << "[" << m_establishedDataConnections.back()->GetId() << "] Connection approved! \n";
-						}
-
-						else
-							std::cout << "Connection denied \n";
-
-						break;
-						}
+						std::cout << "[" << m_established_connections.back()->GetId() << "] Connection approved! \n";
 					}
+
+					else
+						std::cout << "Connection denied \n";
+
 
 				}
 				else
@@ -145,36 +114,30 @@ public:
 
 	void ServerUpdate()
 	{
-		while(!m_receivedControlRequests.empty() || !m_receivedDataRequests.empty())
+		while(!m_received_requests.empty())
 		{
-			if(!m_receivedControlRequests.empty())
+			if(!m_received_requests.empty())
 			{
-				auto new_control_request = m_receivedControlRequests.front();
-				m_receivedControlRequests.pop_front();
+				auto new_request = m_received_requests.front();
+				m_received_requests.pop_front();
 
-				OnControlRequest(new_control_request.sender, new_control_request);
+
+				if (new_request.request_header.operation == request_code::operation_types::COLLECT_DATA)
+					OnDataRequest(new_request.sender, new_request);
+
+				else
+					OnControlRequest(new_request.sender, new_request);
 
 			}
 
-			if(!m_receivedDataRequests.empty())
-			{
-				auto new_data_request = m_receivedDataRequests.front();
-				m_receivedControlRequests.pop_front();
-
-				OnDataRequest(new_data_request.sender, new_data_request);
-			}
 
 		}
 	}
 private:
-	bool OnDataConnectionEstablish(std::shared_ptr<ftp_connection> client)
+	
+	bool OnConnectionEstablish(std::shared_ptr<ftp_connection> client)
 	{
-		std::cout << "Data connection has been established...\n";
-		return true;
-	}
-	bool OnControlConnectionEstablish(std::shared_ptr<ftp_connection> client)
-	{
-		std::cout << "Control connection has been established... \n";
+		std::cout << "Connection has been established \n";
 		return true;
 	}
 	void OnClientDisconnect(std::shared_ptr<ftp_connection> client)
@@ -184,43 +147,37 @@ private:
 
 	void OnControlRequest(std::shared_ptr<ftp_connection> client, request& req)
 	{
-		switch(req.request_header.operation)
-		{
+
+		//saving requested data
+		unsigned long request_hash = ftp_server::HashRequest(client->GetId());
+		data_request_details.insert({ request_hash, std::move(req)});
+
+		request response;
+		response.request_header.operation = request_code::operation_types::SERVER_OK;
+		response.InsertTrivialToBuffer(request_hash);
+		client->Send(response);
 		
-		case request_code::operation_types::ASSIGN_DATA_CONNECTION:
-			std::cout << "Client [" << client->GetId() << "] requested data stream connection \n";
-			std::cout << "No errors, accepting request. \n";
-			client->Send(req);
-			break;
+	}
 
-		case request_code::operation_types::STOR:
-			{
-			const char* file_name;
-			req.ExtractTrivialFromBuffer(file_name);
+	void OnDataRequest(std::shared_ptr<ftp_connection> client, request& req)
+	{
+		unsigned long data_hash;
+		req.ExtractTrivialFromBuffer(data_hash);
+		auto& data_request = data_request_details[data_hash];
 
-
-			std::cout << client->GetId() << "Received file:  \n";
-			std::cout << file_name << "\n";
-			request new_request;
-			new_request.request_header.operation = request_code::operation_types::STOR;
-			new_request.InsertTrivialToBuffer(file_name);
-
-			client->Send(new_request);
-			break;
-			}
-			
-
+		switch(data_request.request_header.operation)
+		{
 		case request_code::operation_types::LS:
 			{
-			std::cout << "User [" << client->GetId() << "] requested listing of files: \n";
 
 			std::size_t user_path_length;
 			std::string user_path;
-			req.ExtractTrivialFromBuffer(user_path_length);
-			req.ExtractStringFromBuffer(user_path, user_path_length);
+			data_request.ExtractTrivialFromBuffer(user_path_length);
+			data_request.ExtractStringFromBuffer(user_path, user_path_length);
+
 			request response;
 			response.request_header.operation = request_code::operation_types::LS;
-			//response.CopyFromVectorBuffer(file_buffer);
+
 			for (const auto& file : std::filesystem::directory_iterator(default_server_path + user_path))
 			{
 
@@ -228,8 +185,6 @@ private:
 				const std::size_t file_path_length = file_path.length();
 				const bool type = file.is_directory();
 				const std::size_t file_size = file.file_size();
-				
-
 
 				response.InsertTrivialToBuffer(file_path_length);
 				response.InsertStringToBuffer(file_path);
@@ -237,88 +192,59 @@ private:
 				response.InsertTrivialToBuffer(type);
 			}
 
-			std::cout << "Final buffer size in server: " << response.request_body.size() << "\n";
+			data_request_details.erase(data_hash);
 			client->Send(response);
 			break;
-				
 			}
+
 		case request_code::operation_types::RETR:
 			{
-			std::string file_name;
-			std::size_t file_name_length;
-			req.ExtractTrivialFromBuffer(file_name_length);
-			req.ExtractStringFromBuffer(file_name, file_name_length);
-			std::string path = "C:/Users/kubcz/Desktop";
-			std::string ifstream_path = "C:\\Users\kubcz\\Desktop\\";
-			path += "/" + file_name;
-			ifstream_path += file_name;
-			//std::cout << std::filesystem::exists(path);
+			std::size_t user_path_length;
+			std::string user_path;
 
+			data_request.ExtractTrivialFromBuffer(user_path_length);
+			data_request.ExtractStringFromBuffer(user_path, user_path_length);
+			
 			request response;
 			response.request_header.operation = request_code::operation_types::RETR;
-				if(std::filesystem::exists(path))
-				{
-					std::ifstream input(path, std::ios::binary);
-					//Inserting trivial boolean set to true -> file exists, can save
-					
-					bool file_exists = true;
-					
-					response.InsertTrivialToBuffer(file_exists);
-					response.InsertTrivialToBuffer(file_name_length);
-					response.InsertStringToBuffer(file_name);
+			while (!data_request.request_body.empty())
+			{
+				std::string file_name;
+				std::size_t file_name_length;
+				data_request.ExtractTrivialFromBuffer(file_name_length);
+				data_request.ExtractStringFromBuffer(file_name, file_name_length);
 
-					std::vector<unsigned char> file_buffer(std::istreambuf_iterator<char>(input), {});
-					std::copy(file_buffer.cbegin(), file_buffer.cend(), std::back_inserter(response.request_body));
-					response.request_header.request_size = response.request_body.size();
+				std::ifstream file_binary(default_server_path + user_path + "\\" + file_name, std::ios::binary);
 
-					 
-				}
-				else
-				{
-					bool file_exists = false;
-					response.InsertTrivialToBuffer(file_exists);
+				response.InsertTrivialToBuffer(file_name_length);
+				response.InsertStringToBuffer(file_name);
+				std::vector<unsigned char> file_binary_buffer(std::istreambuf_iterator<char>(file_binary), {});
+				auto file_binary_size = file_binary_buffer.size();
 
-					std::string not_such_file = "There is no such file!";
-					const std::size_t str_length = not_such_file.length();
-					response.InsertTrivialToBuffer(str_length);
-					response.InsertStringToBuffer(not_such_file);
-				}
 
-				client->Send(response);
+				response.InsertTrivialToBuffer(file_binary_size);
+				std::copy(
+					file_binary_buffer.cbegin(), 
+					file_binary_buffer.cend(), 
+					std::back_inserter(response.request_body)
+				);
+
+				response.request_header.request_size = response.request_body.size();
+			}
+
+			client->Send(response);
 			break;
 			}
-		case request_code::operation_types::CD:
-			{
-			std::string path = "C:/Users/kubcz/Desktop/";
-			std::size_t user_path_size;
-			std::string user_path;
-			req.ExtractTrivialFromBuffer(user_path_size);
-			req.ExtractStringFromBuffer(user_path, user_path_size);
 
-			path += user_path;
-			request response;
-			std::cout << path << "\n";
-			response.request_header.operation = request_code::operation_types::CD;
-				if(std::filesystem::is_directory(path))
-				{
-					std::cout << "Is a directory";
-				}
-				else
-				{
-					std::cout << "Not a directory";
-				}
-				break;
+		case request_code::operation_types::DELE:
+			{
+
+			break;
 			}
 		}
 	}
-
-	void OnDataRequest(std::shared_ptr<ftp_connection> client, request& req)
+	static unsigned int HashRequest(uint32_t client_id)
 	{
-		switch(req.request_header.operation)
-		{
-		case request_code::operation_types::STOR:
-			std::cout << client->GetId() << " Stor recevied as data req \n";
-			break;
-		}
+		 return client_id ^ 0xB16B00B5;
 	}
 };

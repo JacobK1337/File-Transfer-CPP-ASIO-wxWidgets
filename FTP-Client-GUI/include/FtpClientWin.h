@@ -5,7 +5,7 @@
 #include"ftpclient.h"
 #include"RequestHandlerThread.h"
 #include<filesystem>
-
+#include<fstream>
 struct FileDetails
 {
 public:
@@ -33,30 +33,37 @@ private:
 	wxDirPickerCtrl* m_dir_picker = nullptr;
 	wxStaticText* m_dir_picker_label = nullptr;
 	wxListCtrl* m_server_files_list = nullptr;
-	wxButton* test_button = nullptr;
+	wxButton* m_save_button = nullptr;
 	wxListCtrl* m_logs_list = nullptr;
 	ftp_client client;
 	RequestHandlerThread* m_request_thread = nullptr;
-	std::string user_directory = "";
+	std::string user_directory;
 
 	std::vector<std::shared_ptr<FileDetails>> m_file_details;
 
 	//GUI items setters
 	void SetupToolbar();
-	void SetupFileList();
+	void SetupFilesList();
 	void SetupLogsList();
 
 	//Action handlers
-	void onClick(wxCommandEvent& evt);
-	void onActivate(wxListEvent& evt);
+	void OnSaveButtonClick(wxCommandEvent& evt);
+	void OnFileActivate(wxListEvent& evt);
 	void OnServerResponse(wxThreadEvent& evt);
-	void GetServerFileList(std::string& file_path);
 	void OnClose(wxCloseEvent& evt);
 
 
-	//Logs handlers
-
+	//Display handlers
 	void DisplayLog(const std::string&& log_text, const wxColour&& log_colour) const;
-	void DisplayFile(const std::string& file_name, const std::size_t file_size, const bool is_directory);
+	void DisplayFiles() const;
 	void ResetFilesList();
+	
+	//Requests handlers
+	void ChangeDirectory(std::string& path);
+	void SaveSelectedFiles();
+	void RemoveSelectedFiles();
+	void ImportSelectedFiles();
+
+	//Thread action
+	void SendRequest(request& new_request, ftp_connection::conn_type conn_type);
 };

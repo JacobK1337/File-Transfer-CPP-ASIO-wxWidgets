@@ -4,6 +4,8 @@
 #include<asio/ts/internet.hpp>
 #include<deque>
 #include"request.h"
+#include<map>
+
 
 class ftp_connection : public std::enable_shared_from_this<ftp_connection>
 {
@@ -12,7 +14,8 @@ public:
 	enum class conn_type
 	{
 		control,
-		data
+		data,
+		server_remote
 	};
 
 	enum class conn_founder
@@ -20,6 +23,8 @@ public:
 		client,
 		server
 	};
+
+public:
 
 	ftp_connection(conn_type t_connType, 
 		conn_founder t_connFounder, 
@@ -31,6 +36,8 @@ public:
 		m_connType = t_connType;
 		m_connFounder = t_connFounder;
 	}
+
+
 	~ftp_connection(){}
 
 
@@ -49,7 +56,7 @@ public:
 				{
 					std::cout << "Connection type: ";
 					m_connType == conn_type::control ? std::cout << "CONTROL \n" : std::cout << "DATA \n";
-					std::cout << "Local endpoint: " << m_connSocket.local_endpoint() << "\n";
+					//std::cout << "Local endpoint: " << m_connSocket.local_endpoint() << "\n";
 					ReadRequestHeader();
 				}
 			});

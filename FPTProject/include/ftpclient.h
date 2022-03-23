@@ -26,7 +26,6 @@ private:
 	std::deque<request> m_controlRequests;
 	std::deque<request> m_dataRequests;
 
-	std::string working_directory;
 public:
 	ftp_client() : m_controlSocket(m_controlContext), m_dataSocket(m_dataContext)
 	{
@@ -46,6 +45,7 @@ public:
 			asio::ip::tcp::resolver resolver(m_controlContext);
 			auto endpoints = resolver.resolve(host, std::to_string(port));
 
+			
 			m_controlConnection = std::make_unique<ftp_connection>(
 				ftp_connection::conn_type::control,
 				ftp_connection::conn_founder::client,
@@ -54,14 +54,16 @@ public:
 				m_controlRequests
 				);
 
-
+			std::cout << "listening to server \n";
 			m_controlConnection->ListenToServer(endpoints->endpoint());
 
+			
 			m_threadControlContext = std::thread(
 				[this]() -> void
 				{
 					m_controlContext.run();
 				});
+			 
 		}
 
 		catch(std::exception& e)
@@ -124,6 +126,10 @@ public:
 	{
 		if (IsDataStreamConnected())
 			m_dataConnection->Disconnect();
+
+		m_dataContext.stop();
+		if (m_threadDataContext.joinable())
+			m_threadDataContext.join();
 	}
 
 	bool IsControlStreamConnected()
@@ -144,7 +150,7 @@ public:
 			return false;
 	}
 
-	void SendRequest(const request& req)
+	void SendControlRequest(const request& req)
 	{
 
 		if(IsControlStreamConnected())
@@ -155,7 +161,7 @@ public:
 			
 	}
 
-	void SendFile(const request& req)
+	void SendDataRequest(const request& req)
 	{
 		if (IsDataStreamConnected())
 		{
