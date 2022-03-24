@@ -1,33 +1,31 @@
 #pragma once
 #include<asio.hpp>
-#include<asio/ts/buffer.hpp>
-#include<asio/ts/internet.hpp>
 #include<deque>
-#include"request.h"
+#include"ftp_request.h"
 #include"ftpconnection.h"
 class ftp_client
 {
 private:
-	asio::io_context m_controlContext;
-	asio::io_context m_dataContext;
+	asio::io_context m_control_context;
+	asio::io_context m_data_context;
 
-	std::thread m_threadControlContext;
-	std::thread m_threadDataContext;
+	std::thread m_thread_control_context;
+	std::thread m_thread_data_context;
 
-	asio::ip::tcp::socket m_controlSocket;
-	asio::ip::tcp::socket m_dataSocket;
+	asio::ip::tcp::socket m_control_socket;
+	asio::ip::tcp::socket m_data_socket;
 
-	asio::ip::tcp::resolver::results_type m_controlConnectionEndpoints;
-	asio::ip::tcp::resolver::results_type m_dataConnectionEndpoints;
+	asio::ip::tcp::resolver::results_type m_control_conn_endpoints;
+	asio::ip::tcp::resolver::results_type m_data_conn_endpoints;
 
-	std::unique_ptr<ftp_connection> m_controlConnection;
-	std::unique_ptr<ftp_connection> m_dataConnection;
+	std::shared_ptr<ftp_connection> m_control_conn;
+	std::shared_ptr<ftp_connection> m_data_conn;
 
-	std::deque<request> m_controlRequests;
-	std::deque<request> m_dataRequests;
+	std::deque<ftp_request> m_control_requests;
+	std::deque<ftp_request> m_data_requests;
 
 public:
-	ftp_client() : m_controlSocket(m_controlContext), m_dataSocket(m_dataContext)
+	ftp_client() : m_control_socket(m_control_context), m_data_socket(m_data_context)
 	{
 		
 	}
@@ -37,33 +35,31 @@ public:
 		
 	}
 
+
 	bool EstablishControlConnection(const std::string& host, const uint16_t port)
 	{
 
 		try
 		{
-			asio::ip::tcp::resolver resolver(m_controlContext);
+
+			asio::ip::tcp::resolver resolver(m_control_context);
 			auto endpoints = resolver.resolve(host, std::to_string(port));
 
-			
-			m_controlConnection = std::make_unique<ftp_connection>(
+			m_control_conn = std::make_shared<ftp_connection>(
 				ftp_connection::conn_type::control,
 				ftp_connection::conn_founder::client,
-				std::move(m_controlSocket),
-				m_controlContext,
-				m_controlRequests
+				std::move(m_control_socket),
+				m_control_context,
+				m_control_requests
 				);
 
-			std::cout << "listening to server \n";
-			m_controlConnection->ListenToServer(endpoints->endpoint());
+			ListenToServer(endpoints->endpoint(), m_control_conn);
 
-			
-			m_threadControlContext = std::thread(
+			m_thread_control_context = std::thread(
 				[this]() -> void
 				{
-					m_controlContext.run();
+					m_control_context.run();
 				});
-			 
 		}
 
 		catch(std::exception& e)
@@ -80,26 +76,26 @@ public:
 	{
 		try
 		{
-			asio::ip::tcp::resolver resolver(m_dataContext);
+			asio::ip::tcp::resolver resolver(m_data_context);
 			auto endpoints = resolver.resolve(host, std::to_string(port));
 
-			m_dataConnection = std::make_unique<ftp_connection>(
+			m_data_conn = std::make_shared<ftp_connection>(
 				ftp_connection::conn_type::data,
 				ftp_connection::conn_founder::client,
-				std::move(m_dataSocket),
-				m_dataContext,
-				m_dataRequests
+				std::move(m_data_socket),
+				m_data_context,
+				m_data_requests
 				);
 
-			//std::cout << "Listening to the server on data stream [" << m_dataSocket.local_endpoint() << "]\n";
-			m_dataConnection->ListenToServer(endpoints->endpoint());
+			ListenToServer(endpoints->endpoint(), m_data_conn);
 
-			m_threadDataContext = std::thread(
+			m_thread_data_context = std::thread(
 				[this]() -> void
 				{
-					m_dataContext.run();
+					m_data_context.run();
 				}
 			);
+			 
 		}
 		catch(std::exception& e)
 		{
@@ -111,31 +107,42 @@ public:
 		return true;
 	}
 
+	void ListenToServer(const asio::ip::tcp::resolver::endpoint_type& t_serverEndpoint, std::shared_ptr<ftp_connection> t_conn) const
+	{
+		t_conn->GetSocket().async_connect(t_serverEndpoint,
+			[this, t_conn](std::error_code ec) -> void
+			{
+				if (!ec)
+				{
+					t_conn->StartReading();
+				}
+			});
+	}
 
 	void ControlStreamDisconnect()
 	{
 		if (IsControlStreamConnected())
-			m_controlConnection->Disconnect();
+			m_control_conn->Disconnect();
 
-		m_controlContext.stop();
-		if (m_threadControlContext.joinable())
-			m_threadControlContext.join();
+		m_control_context.stop();
+		if (m_thread_control_context.joinable())
+			m_thread_control_context.join();
 	}
 
 	void DataStreamDisconnect()
 	{
 		if (IsDataStreamConnected())
-			m_dataConnection->Disconnect();
+			m_data_conn->Disconnect();
 
-		m_dataContext.stop();
-		if (m_threadDataContext.joinable())
-			m_threadDataContext.join();
+		m_data_context.stop();
+		if (m_thread_data_context.joinable())
+			m_thread_data_context.join();
 	}
 
 	bool IsControlStreamConnected()
 	{
-		if (m_controlConnection)
-			return m_controlConnection->IsSocketOpen();
+		if (m_control_conn)
+			return m_control_conn->IsSocketOpen();
 
 		else
 			return false;
@@ -143,42 +150,42 @@ public:
 
 	bool IsDataStreamConnected()
 	{
-		if (m_dataConnection)
-			return m_dataConnection->IsSocketOpen();
+		if (m_data_conn)
+			return m_data_conn->IsSocketOpen();
 
 		else
 			return false;
 	}
 
-	void SendControlRequest(const request& req)
+	void SendControlRequest(const ftp_request& req)
 	{
 
 		if(IsControlStreamConnected())
 		{
-			m_controlConnection->Send(req);
+			m_control_conn->Write(req);
 		}
 		 
 			
 	}
 
-	void SendDataRequest(const request& req)
+	void SendDataRequest(const ftp_request& req)
 	{
 		if (IsDataStreamConnected())
 		{
-			m_dataConnection->Send(req);
+			m_data_conn->Write(req);
 		}
 	}
 
 
 	
-	std::deque<request>& IncomingControlRequests()
+	std::deque<ftp_request>& ReceivedControlResponses()
 	{
-		return m_controlRequests;
+		return m_control_requests;
 	}
 
-	std::deque<request>& IncomingDataRequests()
+	std::deque<ftp_request>& ReceivedDataResponses()
 	{
-		return m_dataRequests;
+		return m_data_requests;
 	}
 };
 

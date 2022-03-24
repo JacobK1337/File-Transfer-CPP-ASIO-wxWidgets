@@ -1,6 +1,6 @@
 ﻿
 #include <iostream>
-#include"include/request.h"
+#include"include/ftp_request.h"
 #include<filesystem>
 #include"include/ftpclient.h"
 

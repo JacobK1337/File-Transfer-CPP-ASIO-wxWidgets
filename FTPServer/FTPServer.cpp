@@ -14,7 +14,7 @@ int main()
     server.Start();
     while(true)
     {
-        server.ServerUpdate();
+        server.CheckForRequests();
     }
 }
 
