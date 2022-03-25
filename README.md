@@ -1,1 +1,1 @@
-# FTP-GUI-CPP
+# File-Transfer-CPP-ASIO-wxWidgets
