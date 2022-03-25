@@ -22,18 +22,19 @@ private:
 	wxToolBar* m_toolbar;
 	wxDirPickerCtrl* m_save_dir_picker = nullptr;
 	wxFilePickerCtrl* m_send_file_picker = nullptr;
-	wxStaticText* m_dir_picker_label = nullptr;
 	wxListCtrl* m_server_files_list = nullptr;
 
 	//
 	wxImageList* m_file_image_list = nullptr;
 	//
+
 	wxButton* m_save_button = nullptr;
+	wxButton* m_upload_button = nullptr;
 	wxListCtrl* m_logs_list = nullptr;
 	ftp_client client;
 	RequestHandlerThread* m_request_thread = nullptr;
-	std::string user_directory = "";
 
+	std::string user_server_directory = "";
 	std::vector<std::shared_ptr<File::FileDetails>> m_file_details;
 	std::map<File::file_type, int> m_file_icons;
 
@@ -45,7 +46,9 @@ private:
 
 	//Action handlers
 	void OnSaveButtonClick(wxCommandEvent& evt);
+	void OnUploadButtonClick(wxCommandEvent& evt);
 	void OnFileActivate(wxListEvent& evt);
+	void OnKeyDown(wxKeyEvent& evt);
 	void OnServerResponse(wxThreadEvent& evt);
 	void OnClose(wxCloseEvent& evt);
 
@@ -59,6 +62,7 @@ private:
 	void ChangeDirectory(std::string& path);
 	void SaveSelectedFiles();
 	void RemoveSelectedFiles();
+	void InsertSelectedToRequest(ftp_request& request) const;
 	void UploadFile();
 
 	//Thread action

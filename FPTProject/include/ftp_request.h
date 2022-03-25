@@ -1,5 +1,6 @@
 #pragma once
 #include<asio.hpp>
+#include <filesystem>
 #include<asio/ts/internet.hpp>
 #include<vector>
 
@@ -15,8 +16,10 @@ struct ftp_request_header
 		STOR,
 		DELE,
 		RETR,
-		LS,
 		CD,
+
+		//connection operations
+		DISCONNECT,
 
 		//verification
 		COLLECT_DATA,
@@ -38,7 +41,6 @@ struct ftp_request
 	std::vector<unsigned char> mem_buffer;
 	std::shared_ptr<ftp_connection> sender = nullptr;
 
-	//std::vector<uint8_t> request_body_cache;
 
 	ftp_request() = default;
 
@@ -92,9 +94,15 @@ struct ftp_request
 
 
 	//Extraction and insertion of not trivially copyable structures, ex. string.
-	void ExtractStringFromBuffer(std::string& str, const std::size_t str_length)
+	void ExtractStringFromBuffer(std::string& str)
 	{
-		
+		//extracting string length
+		//it should always be inserted BEFORE corresponding string
+		//other way, can't determine the length, so extracting is not possible
+		std::size_t str_length;
+		ExtractTrivialFromBuffer(str_length);
+
+
 		std::vector<unsigned char> str_binary(mem_buffer.cbegin(), mem_buffer.cbegin() + str_length);
 		std::string extract_str(str_binary.cbegin(), str_binary.cend());
 
@@ -106,8 +114,15 @@ struct ftp_request
 
 	void InsertStringToBuffer(std::string& str)
 	{
+		//always inserting string length before actual string.
+		auto str_length = str.length();
+		InsertTrivialToBuffer(str_length);
+
 		std::vector<unsigned char> str_binary(str.cbegin(), str.cend());
-		std::copy(str_binary.cbegin(), str_binary.cend(), std::back_inserter(mem_buffer));
+		std::copy(str_binary.cbegin(), 
+			str_binary.cend(), 
+			std::back_inserter(mem_buffer)
+		);
 
 		header.request_size = GetSize();
 	}
@@ -115,6 +130,10 @@ struct ftp_request
 	template<typename VecArg>
 	void CopyFromVector(std::vector<VecArg>& copy_from)
 	{
+
+		auto copy_from_size = copy_from.size();
+		InsertTrivialToBuffer(copy_from_size);
+
 		std::copy(
 			copy_from.cbegin(),
 			copy_from.cend(),
@@ -122,6 +141,21 @@ struct ftp_request
 		);
 
 		header.request_size = GetSize();
+	}
+
+	template<typename VecArg>
+	void ExtractToVector(std::vector<VecArg>& extract_to)
+	{
+		std::size_t file_size;
+		ExtractTrivialFromBuffer(file_size);
+
+		std::copy(
+			mem_buffer.cbegin(),
+			mem_buffer.cbegin() + file_size,
+			std::back_inserter(extract_to)
+		);
+
+		mem_buffer.erase(mem_buffer.cbegin(), mem_buffer.cbegin() + file_size);
 	}
 };
 
@@ -143,4 +177,16 @@ namespace File
 		FileDetails(std::string& t_file_name, std::size_t t_file_size, file_type t_type)
 			: file_name(std::move(t_file_name)), file_size(t_file_size), type(t_type) {}
 	};
+
+	static void InsertFileDetails(ftp_request& request, std::string& file_name, std::size_t& file_size, file_type& f_type)
+	{
+		request.InsertStringToBuffer(file_name);
+		request.InsertTrivialToBuffer(file_size, f_type);
+	}
+
+	static void ExtractFileDetails(ftp_request& request, std::string& file_name, std::size_t& file_size, file_type& f_type)
+	{
+		request.ExtractStringFromBuffer(file_name);
+		request.ExtractTrivialFromBuffer(file_size, f_type);
+	}
 }

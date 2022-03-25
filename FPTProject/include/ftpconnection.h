@@ -56,6 +56,11 @@ public:
 
 	void Disconnect()
 	{
+
+		ftp_request disconnect_request;
+		disconnect_request.header.operation = ftp_request_header::ftp_operation::DISCONNECT;
+		Write(disconnect_request);
+
 		asio::post(m_conn_context,
 			[this]() -> void
 			{
@@ -119,8 +124,11 @@ private:
 			}
 			else
 			{
-				std::cout << "Writing ftp_request failed. Closing socket. \n";
-				m_conn_socket.close();
+				if(IsSocketOpen())
+				{
+					std::cout << "Writing header stopped. \n";
+					m_conn_socket.close();
+				}
 			}
 		});
 	}
@@ -140,8 +148,11 @@ private:
 
 				else
 				{
-					std::cout << "Writing ftp_request failed. Closing socket. \n";
-					m_conn_socket.close();
+					if(IsSocketOpen())
+					{
+						std::cout << "Writing buffer stopped. \n";
+						m_conn_socket.close();
+					}
 				}
 			});
 	}
@@ -167,8 +178,11 @@ private:
 				}
 				else
 				{
-					std::cout << "Reading header failed. \n";
-					m_conn_socket.close();
+					if(IsSocketOpen())
+					{
+						std::cout << "Reading header stopped. \n";
+						m_conn_socket.close();
+					}
 				}
 			});
 	}
@@ -184,8 +198,12 @@ private:
 				}
 				else
 				{
-					std::cout << "Reading body failed. \n";
+					if(IsSocketOpen())
+					{
+					std::cout << "Reading buffer stopped. \n";
 					m_conn_socket.close();
+						
+					}
 				}
 			});
 	}

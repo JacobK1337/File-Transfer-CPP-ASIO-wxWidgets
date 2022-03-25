@@ -11,23 +11,23 @@ class ftp_server
 
 private:
 	std::deque<ftp_request> m_received_requests;
-	std::deque<std::shared_ptr<ftp_connection>> m_established_connections;
+
+	std::vector<std::shared_ptr<ftp_connection>> m_established_connections;
+
 	asio::io_context m_server_context;
+
 	std::thread m_context_thread;
+
 	asio::ip::tcp::acceptor m_server_acceptor;
 
-	std::string default_server_path = "C:\\Users\\kubcz\\Desktop";//std::filesystem::current_path().string();
+	std::string default_server_path = std::filesystem::current_path().string();
 
 	std::map<unsigned long, ftp_request> data_request_details;
 
 public:
 	ftp_server(uint16_t port)
 		:m_server_acceptor(m_server_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port))
-	{
-
-		
-
-	}
+	{}
 
 	~ftp_server()
 	{
@@ -116,24 +116,26 @@ public:
 	{
 		while(!m_received_requests.empty())
 		{
-			if(!m_received_requests.empty())
-			{
-				auto new_request = m_received_requests.front();
-				m_received_requests.pop_front();
+			
+			auto new_request = m_received_requests.front();
+			m_received_requests.pop_front();
 
 
-				if (new_request.header.operation == ftp_request_header::ftp_operation::COLLECT_DATA)
-					OnDataRequest(new_request.sender, new_request);
+			if (new_request.header.operation == ftp_request_header::ftp_operation::COLLECT_DATA)
+				OnDataRequest(new_request.sender, new_request);
 
-				else
-					OnControlRequest(new_request.sender, new_request);
+			else if (new_request.header.operation == ftp_request_header::ftp_operation::DISCONNECT)
+				OnDisconnectRequest(new_request.sender);
 
-			}
+			else
+				OnControlRequest(new_request.sender, new_request);
+
 		}
 	}
 private:
 	void OnControlRequest(std::shared_ptr<ftp_connection> client, ftp_request& req)
 	{
+
 
 		//saving requested data
 		unsigned long request_hash = ftp_server::HashRequest(client->GetId());
@@ -155,29 +157,25 @@ private:
 
 		switch(data_request.header.operation)
 		{
-		case ftp_request_header::ftp_operation::LS:
+		case ftp_request_header::ftp_operation::CD:
 			{
-			
-			std::size_t user_path_length;
+
 			std::string user_path;
-			data_request.ExtractTrivialFromBuffer(user_path_length);
-			data_request.ExtractStringFromBuffer(user_path, user_path_length);
+			
+			data_request.ExtractStringFromBuffer(user_path);
 
 			ftp_request response;
-			response.header.operation = ftp_request_header::ftp_operation::LS;
+			response.header.operation = ftp_request_header::ftp_operation::CD;
 
 			for (const auto& file : std::filesystem::directory_iterator(default_server_path + user_path))
 			{
 
-				std::string file_path = file.path().filename().string();
-				const std::size_t file_path_length = file_path.length();
-				const bool type = file.is_directory();
-				const std::size_t file_size = file.file_size();
+				std::string file_name = file.path().filename().string();
+				File::file_type file_type = file.is_directory() ? File::file_type::DIR : File::file_type::FILE;
+				std::size_t file_size = file.file_size();
 
-				response.InsertTrivialToBuffer(file_path_length);
-				response.InsertStringToBuffer(file_path);
-				response.InsertTrivialToBuffer(file_size);
-				response.InsertTrivialToBuffer(type);
+				File::InsertFileDetails(response, file_name, file_size, file_type);
+				
 			}
 
 			data_request_details.erase(data_hash);
@@ -187,42 +185,28 @@ private:
 
 		case ftp_request_header::ftp_operation::RETR:
 			{
-			std::size_t user_path_length;
+			
 			std::string user_path;
 
-			data_request.ExtractTrivialFromBuffer(user_path_length);
-			data_request.ExtractStringFromBuffer(user_path, user_path_length);
+			data_request.ExtractStringFromBuffer(user_path);
 			
 			ftp_request response;
 			response.header.operation = ftp_request_header::ftp_operation::RETR;
 			while (!data_request.mem_buffer.empty())
 			{
 				std::string file_name;
-				std::size_t file_name_length;
-				data_request.ExtractTrivialFromBuffer(file_name_length);
-				data_request.ExtractStringFromBuffer(file_name, file_name_length);
+
+				data_request.ExtractStringFromBuffer(file_name);
 
 				std::ifstream file_binary(default_server_path + user_path + "\\" + file_name, std::ios::binary);
 
-				response.InsertTrivialToBuffer(file_name_length);
 				response.InsertStringToBuffer(file_name);
 
-
 				std::vector<unsigned char> file_binary_buffer(std::istreambuf_iterator<char>(file_binary), {});
-				auto file_binary_size = file_binary_buffer.size();
-				response.InsertTrivialToBuffer(file_binary_size);
-				/*
-				 *
-				std::copy(
-					file_binary_buffer.cbegin(), 
-					file_binary_buffer.cend(), 
-					std::back_inserter(response.mem_buffer)
-				);
 
-				response.header.request_size = response.mem_buffer.size();
-				 */
 				response.CopyFromVector(file_binary_buffer);
 			}
+
 			data_request_details.erase(data_hash);
 			client->Write(response);
 			break;
@@ -230,25 +214,74 @@ private:
 
 		case ftp_request_header::ftp_operation::STOR:
 			{
-			//to implement
+			std::string file_name;
+			std::vector<unsigned char> uploaded_file_buffer;
+			std::string user_path;
+
+			data_request.ExtractStringFromBuffer(file_name);
+			data_request.ExtractToVector(uploaded_file_buffer);
+			data_request.ExtractStringFromBuffer(user_path);
+
+			std::ofstream uploaded_file(default_server_path + user_path + "\\" + file_name, std::ios::binary);
+			std::copy(
+				uploaded_file_buffer.cbegin(),
+				uploaded_file_buffer.cend(),
+				std::ostreambuf_iterator<char>(uploaded_file)
+			);
+
+			ftp_request response;
+			response.header.operation = ftp_request_header::ftp_operation::STOR;
+			std::string server_info = "File successfully uploaded!";
+			response.InsertStringToBuffer(server_info);
+
+			data_request_details.erase(data_hash);
+			client->Write(response);
 			break;
 			}
 		case ftp_request_header::ftp_operation::DELE:
 			{
+			std::string user_path;
 
+			data_request.ExtractStringFromBuffer(user_path);
+
+			ftp_request response;
+			response.header.operation = ftp_request_header::ftp_operation::DELE;
+			while (!data_request.mem_buffer.empty())
+			{
+				
+				std::string file_name;
+
+				data_request.ExtractStringFromBuffer(file_name);
+
+				remove((default_server_path + user_path + "\\" + file_name).c_str());
+
+			}
+
+			data_request_details.erase(data_hash);
+			std::string server_response = "Files successfully deleted!";
+			response.InsertStringToBuffer(server_response);
+
+			client->Write(response);
 			break;
 			}
 
 		}
 	}
 
+	void OnDisconnectRequest(std::shared_ptr<ftp_connection> client)
+	{
+
+		std::cout << "[" << client->GetId() << "] Client disconnected\n";
+
+		m_established_connections.erase(
+			std::remove(m_established_connections.begin(), m_established_connections.end(), client), m_established_connections.end());
+
+		client.reset();
+
+	}
 	static unsigned int HashRequest(uint32_t client_id)
 	{
 		 return client_id ^ 0xB16B00B5;
 	}
 
-	static unsigned int ForgeClientId()
-	{
-		return 1337;
-	}
 };

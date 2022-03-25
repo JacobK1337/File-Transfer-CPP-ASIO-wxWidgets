@@ -127,6 +127,7 @@ public:
 		m_control_context.stop();
 		if (m_thread_control_context.joinable())
 			m_thread_control_context.join();
+		 
 	}
 
 	void DataStreamDisconnect()
@@ -175,7 +176,6 @@ public:
 			m_data_conn->Write(req);
 		}
 	}
-
 
 	
 	std::deque<ftp_request>& ReceivedControlResponses()

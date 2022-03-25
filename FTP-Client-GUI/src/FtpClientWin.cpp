@@ -4,7 +4,7 @@ wxBEGIN_EVENT_TABLE(FtpClientWin, wxFrame)
 	EVT_CLOSE(FtpClientWin::OnClose)
 wxEND_EVENT_TABLE()
 
-FtpClientWin::FtpClientWin() : wxFrame(nullptr, wxID_ANY, "FTP Client", wxPoint(30, 30), wxSize(1024, 768))
+FtpClientWin::FtpClientWin() : wxFrame(nullptr, wxID_ANY, "FTP Client", wxPoint(30, 30), wxSize(1280, 768))
 {
 	//Connect server response thread event
 	Connect(evt_id::SERVER_RESPONSE_ID, wxEVT_SERVER_RESPONSE, wxThreadEventHandler(FtpClientWin::OnServerResponse));
@@ -15,7 +15,7 @@ FtpClientWin::FtpClientWin() : wxFrame(nullptr, wxID_ANY, "FTP Client", wxPoint(
 
 	m_panel = new wxPanel(this, wxID_ANY);
 
-	wxBoxSizer* panel_sizer = new wxBoxSizer(wxVERTICAL);
+	auto* panel_sizer = new wxBoxSizer(wxVERTICAL);
 
 	m_panel->SetSizer(panel_sizer);
 
@@ -28,7 +28,9 @@ FtpClientWin::FtpClientWin() : wxFrame(nullptr, wxID_ANY, "FTP Client", wxPoint(
 
 	m_panel->Layout();
 
-	FtpClientWin::ChangeDirectory(user_directory);
+	m_panel->Bind(wxEVT_CHAR_HOOK, &FtpClientWin::OnKeyDown, this);
+
+	FtpClientWin::ChangeDirectory(user_server_directory);
 }
 
 FtpClientWin::~FtpClientWin(){}
@@ -39,12 +41,15 @@ void FtpClientWin::SetupToolbar()
 	m_toolbar = this->CreateToolBar(wxTB_HORIZONTAL, wxID_ANY);
 
 	//Saving directory picker
-	std::string current_path = std::filesystem::current_path().string();
-	m_save_dir_picker = new wxDirPickerCtrl(m_toolbar, wxID_ANY, current_path, "Choose saving directory");
+	auto current_path = std::filesystem::current_path().string();
+	const wxFont toolbar_labels_font(15, wxFONTFAMILY_MODERN, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD);
+
+	m_save_dir_picker = new wxDirPickerCtrl(m_toolbar, wxID_ANY, current_path);
 	m_save_dir_picker->SetSize(wxSize(300, 50));
 
 	//Saving directory label
-	m_dir_picker_label = new wxStaticText(m_toolbar, wxID_ANY, "Set saving directory");
+	auto* m_dir_picker_label = new wxStaticText(m_toolbar, wxID_ANY, "Set saving directory:");
+	m_dir_picker_label->SetFont(toolbar_labels_font);
 
 	m_toolbar->AddControl(m_dir_picker_label);
 	m_toolbar->AddControl(m_save_dir_picker);
@@ -59,11 +64,17 @@ void FtpClientWin::SetupToolbar()
 	m_send_file_picker = new wxFilePickerCtrl(m_toolbar, wxID_ANY, current_path);
 	m_send_file_picker->SetSize(wxSize(300, 50));
 
-	auto* m_send_picker_label = new wxStaticText(m_toolbar, wxID_ANY, "Upload file");
+	m_upload_button = new wxButton(m_toolbar, wxID_ANY, "Upload chosen file");
+	m_upload_button->Bind(wxEVT_COMMAND_BUTTON_CLICKED, &FtpClientWin::OnUploadButtonClick, this);
 
+	auto* m_send_picker_label = new wxStaticText(m_toolbar, wxID_ANY, "Upload file:");
+	m_send_picker_label->SetFont(toolbar_labels_font);
 	
+	m_toolbar->AddStretchableSpace();
+
 	m_toolbar->AddControl(m_send_picker_label);
 	m_toolbar->AddControl(m_send_file_picker);
+	m_toolbar->AddControl(m_upload_button);
 
 	m_toolbar->Realize();
 }
@@ -124,8 +135,8 @@ void FtpClientWin::SetupFileImageList()
 	const wxImage dir_img(wxT("./img/dir-icon-small.png"));
 	const wxImage file_img(wxT("./img/file-icon-small.png"));
 
-	int dir_img_id = m_file_image_list->Add(dir_img);
-	int file_img_id = m_file_image_list->Add(file_img);
+	auto dir_img_id = m_file_image_list->Add(dir_img);
+	auto file_img_id = m_file_image_list->Add(file_img);
 
 	m_file_icons.insert({ file_type::DIR, dir_img_id });
 	m_file_icons.insert({ file_type::FILE, file_img_id });
@@ -137,29 +148,34 @@ void FtpClientWin::OnSaveButtonClick(wxCommandEvent& evt)
 	FtpClientWin::SaveSelectedFiles();
 }
 
+void FtpClientWin::OnUploadButtonClick(wxCommandEvent& evt)
+{
+	FtpClientWin::UploadFile();
+}
+
 void FtpClientWin::OnFileActivate(wxListEvent& evt)
 {
 
-	const std::string file_name = evt.GetItem().GetText().ToStdString();
+	auto file_name = evt.GetItem().GetText().ToStdString();
 
 	if (m_file_details[evt.GetItem()]->type == File::file_type::DIR)
 	{
 
 		//if user is not in the home directory, the first option is to go back to previous directory.
 		//change to path for previous directory
-		if (!user_directory.empty() && evt.GetItem() == 0)
+		if (!user_server_directory.empty() && evt.GetItem() == 0)
 		{
-			const auto last_dir = user_directory.find_last_of("/");
-			user_directory.erase(user_directory.cbegin() + last_dir, user_directory.cend());
+			const auto last_dir = user_server_directory.find_last_of("/");
+			user_server_directory.erase(user_server_directory.cbegin() + last_dir, user_server_directory.cend());
 		}
 
 		else
 		{
-			user_directory += "/" + file_name;
+			user_server_directory += "/" + file_name;
 		}
 
-		FtpClientWin::DisplayLog("[YOU]: changing directory to : home" + user_directory, wxColour(0, 255, 255));
-		FtpClientWin::ChangeDirectory(user_directory);
+		FtpClientWin::DisplayLog("[YOU]: changing directory to : home" + user_server_directory, wxColour(0, 255, 255));
+		FtpClientWin::ChangeDirectory(user_server_directory);
 
 	}
 
@@ -171,6 +187,16 @@ void FtpClientWin::OnFileActivate(wxListEvent& evt)
 	
 	
 }
+
+void FtpClientWin::OnKeyDown(wxKeyEvent& evt)
+{
+
+	if(evt.GetKeyCode() == 127)
+	{
+		FtpClientWin::RemoveSelectedFiles();
+	}
+}
+
 
 void FtpClientWin::OnServerResponse(wxThreadEvent& evt)
 {
@@ -192,7 +218,7 @@ void FtpClientWin::OnServerResponse(wxThreadEvent& evt)
 
 		break;
 		}
-	case ftp_request_header::ftp_operation::LS:
+	case ftp_request_header::ftp_operation::CD:
 		{
 
 		FtpClientWin::DisplayLog("[INFO]: Fetched data from the server.", wxColour(0, 204, 0));
@@ -200,18 +226,14 @@ void FtpClientWin::OnServerResponse(wxThreadEvent& evt)
 		
 		while(response.header.request_size > 0)
 		{
-			std::size_t file_name_length;
+
 			std::string file_name;
 			std::size_t file_size;
-			bool is_directory;
-
-			response.ExtractTrivialFromBuffer(file_name_length);
-			response.ExtractStringFromBuffer(file_name, file_name_length);
-			response.ExtractTrivialFromBuffer(file_size);
-			response.ExtractTrivialFromBuffer(is_directory);
+			File::file_type file_type;
+			File::ExtractFileDetails(response,file_name, file_size, file_type);
 
 			m_file_details.push_back(
-				std::make_shared<File::FileDetails>(file_name, file_size, is_directory ? File::file_type::DIR : File::file_type::FILE)
+				std::make_shared<File::FileDetails>(file_name, file_size, file_type)
 			);
 
 		}
@@ -229,25 +251,43 @@ void FtpClientWin::OnServerResponse(wxThreadEvent& evt)
 		auto user_file_path = m_save_dir_picker->GetPath().ToStdString();
 		while (!response.mem_buffer.empty())
 		{
-			std::size_t file_name_length;
+			
 			std::string file_name;
-			std::size_t file_size;
 
-			response.ExtractTrivialFromBuffer(file_name_length);
-			response.ExtractStringFromBuffer(file_name, file_name_length);
-			response.ExtractTrivialFromBuffer(file_size);
+			response.ExtractStringFromBuffer(file_name);
+
 			std::ofstream retrieved_file(user_file_path + "\\" + file_name, std::ios::binary);
+			std::vector<unsigned char> retrieved_file_buffer;
+
+			response.ExtractToVector(retrieved_file_buffer);
 
 			std::copy(
-				response.mem_buffer.cbegin(),
-				response.mem_buffer.cbegin() + file_size,
+				retrieved_file_buffer.cbegin(),
+				retrieved_file_buffer.cend(),
 				std::ostreambuf_iterator<char>(retrieved_file)
 			);
 
-			response.mem_buffer.erase(response.mem_buffer.cbegin(), response.mem_buffer.cbegin() + file_size);
 
 			FtpClientWin::DisplayLog("[INFO]: File: " + file_name + " successfully saved!", wxColour(0, 204, 0));
 		}
+		break;
+		}
+
+	case ftp_request_header::ftp_operation::STOR:
+		{
+		std::string server_response;
+		response.ExtractStringFromBuffer(server_response);
+		FtpClientWin::DisplayLog("[SERVER]: " + server_response, wxColour(0, 204, 0));
+		FtpClientWin::ChangeDirectory(user_server_directory);
+		break;
+		}
+
+	case ftp_request_header::ftp_operation::DELE:
+		{
+		std::string server_response;
+		response.ExtractStringFromBuffer(server_response);
+		FtpClientWin::DisplayLog("[SERVER]: " + server_response, wxColour(0, 204, 0));
+		FtpClientWin::ChangeDirectory(user_server_directory);
 		break;
 		}
 	}
@@ -293,7 +333,7 @@ void FtpClientWin::ResetFilesList()
 	}
 
 
-	if (!user_directory.empty())
+	if (!user_server_directory.empty())
 	{
 		std::string prev_dir_str = "<----";
 
@@ -306,10 +346,10 @@ void FtpClientWin::ResetFilesList()
 void FtpClientWin::ChangeDirectory(std::string& path)
 {
 	ftp_request temp_request;
-	temp_request.header.operation = ftp_request_header::ftp_operation::LS;
-	std::size_t directory_length = path.length();
+	temp_request.header.operation = ftp_request_header::ftp_operation::CD;
+	
 
-	temp_request.InsertTrivialToBuffer(directory_length);
+	//temp_request.InsertTrivialToBuffer(directory_length);
 	temp_request.InsertStringToBuffer(path);
 
 	//running the side-thread to handle ftp_request sending and receiving
@@ -327,32 +367,15 @@ void FtpClientWin::SaveSelectedFiles()
 
 	else
 	{
-		auto next_item = -1;
-		std::vector<std::string> file_names;
+		ftp_request temp_request;
+		temp_request.header.operation = ftp_request_header::ftp_operation::RETR;
 
 		//First, we specify the directory where the files lay.
-		//Its determined by the user_directory variable.
-
-		ftp_request temp_request;
-		auto user_directory_length = user_directory.length();
-
-		temp_request.InsertTrivialToBuffer(user_directory_length);
-		temp_request.InsertStringToBuffer(user_directory);
+		//Its determined by the user_server_directory variable.
+		temp_request.InsertStringToBuffer(user_server_directory);
 
 		//foreach selected items we insert them into ftp_request...
-		while ((next_item = m_server_files_list->GetNextItem(next_item, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED)) != -1)
-		{
-			//for each selected item, we insert its name into the ftp_request.
-			temp_request.header.operation = ftp_request_header::ftp_operation::RETR;
-
-			auto file_name = m_file_details[next_item]->file_name;
-			auto file_name_length = file_name.length();
-
-			temp_request.InsertTrivialToBuffer(file_name_length);
-			temp_request.InsertStringToBuffer(file_name);
-
-		}
-
+		FtpClientWin::InsertSelectedToRequest(temp_request);
 		FtpClientWin::SendRequest(temp_request, ftp_connection::conn_type::control);
 	}
 }
@@ -360,7 +383,42 @@ void FtpClientWin::SaveSelectedFiles()
 
 void FtpClientWin::RemoveSelectedFiles()
 {
-	
+	if (m_server_files_list->GetSelectedItemCount() == 0)
+	{
+		auto* no_selected_files_dialog = new wxMessageDialog(this, "Select files before deleting!");
+		no_selected_files_dialog->ShowModal();
+	}
+
+	else
+	{
+
+		ftp_request temp_request;
+		temp_request.header.operation = ftp_request_header::ftp_operation::DELE;
+
+		//First, we specify the directory where the files lay.
+		//Its determined by the user_server_directory variable.
+		temp_request.InsertStringToBuffer(user_server_directory);
+
+		//foreach selected items we insert them into ftp_request...
+		FtpClientWin::InsertSelectedToRequest(temp_request);
+		FtpClientWin::SendRequest(temp_request, ftp_connection::conn_type::control);
+	}
+}
+
+void FtpClientWin::InsertSelectedToRequest(ftp_request& request) const
+{
+	auto next_item = -1;
+
+	while ((next_item = m_server_files_list->GetNextItem(next_item, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED)) != -1)
+	{
+		//for each selected item, we insert its name into the ftp_request.
+
+		auto file_name = m_file_details[next_item]->file_name;
+
+		//temp_request.InsertTrivialToBuffer(file_name_length);
+		request.InsertStringToBuffer(file_name);
+
+	}
 }
 
 void FtpClientWin::UploadFile()
@@ -369,20 +427,20 @@ void FtpClientWin::UploadFile()
 	temp_request.header.operation = ftp_request_header::ftp_operation::STOR;
 
 	auto file_name = m_send_file_picker->GetFileName().GetFullName().ToStdString();
-	auto file_name_length = file_name.length();
+	
 
 	std::ifstream file_binary(m_send_file_picker->GetPath().ToStdString(), std::ios::binary);
 
 	std::vector<unsigned char> file_binary_buffer(std::istreambuf_iterator<char>(file_binary), {});
 	auto file_binary_size = file_binary_buffer.size();
 
-	temp_request.InsertTrivialToBuffer(file_name_length);
-
 	temp_request.InsertStringToBuffer(file_name);
 
-	temp_request.InsertTrivialToBuffer(file_binary_size);
+	//temp_request.InsertTrivialToBuffer(file_binary_size);
 
 	temp_request.CopyFromVector(file_binary_buffer);
+
+	temp_request.InsertStringToBuffer(user_server_directory);
 
 	FtpClientWin::SendRequest(temp_request, ftp_connection::conn_type::control);
 }
@@ -399,5 +457,6 @@ void FtpClientWin::OnClose(wxCloseEvent& evt)
 {
 	client.ControlStreamDisconnect();
 	client.DataStreamDisconnect();
+
 	Destroy();
 }
