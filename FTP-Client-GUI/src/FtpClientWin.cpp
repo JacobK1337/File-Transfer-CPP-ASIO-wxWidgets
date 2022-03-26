@@ -10,11 +10,11 @@ FtpClientWin::FtpClientWin() : wxFrame(nullptr, wxID_ANY, "FTP Client", wxPoint(
 	Connect(evt_id::SERVER_RESPONSE_ID, wxEVT_SERVER_RESPONSE, wxThreadEventHandler(FtpClientWin::OnServerResponse));
 
 	//Establish connection with the server
-	client.EstablishControlConnection("127.0.0.1", 60000);
-	client.EstablishDataConnection("127.0.0.1", 60000);
+	//client.EstablishControlConnection("127.0.0.1", 60000);
+	//client.EstablishDataConnection("127.0.0.1", 60000);
 
-	//client.EstablishControlConnection("192.168.56.101", 60000);
-	//client.EstablishDataConnection("192.168.56.101", 60000);
+	client.EstablishControlConnection("192.168.56.101", 60000);
+	client.EstablishDataConnection("192.168.56.101", 60000);
 	m_panel = new wxPanel(this, wxID_ANY);
 
 	auto* panel_sizer = new wxBoxSizer(wxVERTICAL);
@@ -37,15 +37,13 @@ FtpClientWin::FtpClientWin() : wxFrame(nullptr, wxID_ANY, "FTP Client", wxPoint(
 	m_request_thread->Run();
 
 
-	/*
-	 *
 	m_upload_thread = std::thread(
 		[this]() -> void
 		{
 			SendFileBytes();
 		}
 	);
-	 */
+	 
 
 	FtpClientWin::ChangeDirectory(user_server_directory);
 }
@@ -228,7 +226,8 @@ void FtpClientWin::OnServerResponse(wxThreadEvent& evt)
 		{
 		unsigned long request_hash;
 		response.ExtractTrivialFromBuffer(request_hash);
-		
+
+		FtpClientWin::DisplayLog("[INFO]: REQUEST_HASH: " + std::to_string(request_hash), wxColour(0, 204, 0));
 		ftp_request data_collect_request;
 		data_collect_request.header.operation = ftp_request_header::ftp_operation::COLLECT_DATA;
 		data_collect_request.InsertTrivialToBuffer(request_hash);
@@ -240,17 +239,26 @@ void FtpClientWin::OnServerResponse(wxThreadEvent& evt)
 
 	case ftp_request_header::ftp_operation::UPLOAD_ACCEPT:
 		{
-			/*
-			 *
+			
 			//recent unresolved file to upload becomes resolved -> is pushed into pending queue
-		auto recent_unresolved = m_files_to_transfer_unresolved.front();
-		m_files_to_transfer_unresolved.pop_front();
+		auto recent_unresolved = m_files_to_transfer_unaccepted.front();
+		m_files_to_transfer_unaccepted.pop_front();
 
 		int server_file_id;
 		response.ExtractTrivialFromBuffer(server_file_id);
 		recent_unresolved->client_file_id = server_file_id;
+		FtpClientWin::DisplayLog("[INFO]: UPLOAD_ACCEPT.", wxColour(0, 204, 0));
+		m_file_upload_mutex.lock();
 
-		m_files_to_transfer_pending.push_back(std::move(recent_unresolved));
+		m_files_to_transfer_queued.push_back(std::move(recent_unresolved));
+
+		m_file_upload_mutex.unlock();
+
+			/*
+			 *
+		std::lock_guard<std::mutex> some_lock(m_upload_request_mutex);
+		uploading = true;
+		m_upload_request_cond.notify_one();
 			 */
 			
 		break;
@@ -296,7 +304,6 @@ void FtpClientWin::OnServerResponse(wxThreadEvent& evt)
 			std::vector<char> retrieved_file_buffer;
 			response.ExtractToVector(retrieved_file_buffer);
 
-			FtpClientWin::DisplayLog("HEREHEEEE", wxColour(0, 0, 204));
 			m_requested_files[file_id]->file_dest->write(retrieved_file_buffer.data(), retrieved_file_buffer.size());
 			m_requested_files[file_id]->remaining_bytes -= retrieved_file_buffer.size();
 
@@ -497,6 +504,7 @@ void FtpClientWin::UploadFile()
 	temp_request.InsertStringToBuffer(user_server_directory);
 	temp_request.InsertStringToBuffer(file_name);
 	temp_request.InsertTrivialToBuffer(file_size);
+	
 
 	/*
 	 *
@@ -522,13 +530,12 @@ void FtpClientWin::UploadFile()
 
 
 	//setting the id to -1 -> waiting for server response to assign the id on the server side.
-	/*
-	 *
-	m_files_to_transfer_unresolved.emplace_back(
+	
+	m_files_to_transfer_unaccepted.emplace_back(
 		std::make_shared<File::FileResponse>(std::move(file_src), file_size, -1)
 	);
 
-	 */
+	 
 
 	FtpClientWin::SendRequest(temp_request, ftp_connection::conn_type::control);
 }
@@ -539,11 +546,21 @@ void FtpClientWin::SendFileBytes()
 {
 	while (running)
 	{
+		/*
+		 *
+		std::unique_lock check_for_upload_lock(m_upload_request_mutex);
+		m_upload_request_cond.wait(check_for_upload_lock, [this]() -> bool
+			{
+				return uploading;
+			});
+		 */
+
+		Sleep(200);
 		for (auto& curr_file : m_files_to_transfer_accepted)
 		{
 			ftp_request file_bytes_response;
-			file_bytes_response.header.operation = ftp_request_header::ftp_operation::RETR;
-			std::vector<char> buffer(std::min(static_cast<unsigned long long>(1000000), curr_file->remaining_bytes));
+			file_bytes_response.header.operation = ftp_request_header::ftp_operation::UPLOAD_DATA;
+			std::vector<char> buffer(std::min(static_cast<unsigned long long>(50000000), curr_file->remaining_bytes));
 
 			file_bytes_response.InsertTrivialToBuffer(curr_file->client_file_id);
 
@@ -553,9 +570,8 @@ void FtpClientWin::SendFileBytes()
 
 			file_bytes_response.CopyFromVector(buffer);
 
-			//curr_file->receiver->Write(file_bytes_response);
 
-			//client.SendDataRequest()
+			client.SendDataRequest(file_bytes_response);
 		}
 
 		if (!m_files_to_transfer_accepted.empty())
@@ -570,23 +586,29 @@ void FtpClientWin::SendFileBytes()
 						);
 		}
 
-		for (auto& pending_file : m_files_to_transfer_pending)
+		m_file_upload_mutex.lock();
+
+		for (auto& pending_file : m_files_to_transfer_queued)
 		{
 			m_files_to_transfer_accepted.push_back(std::move(pending_file));
 		}
 
-		if (!m_files_to_transfer_pending.empty())
+		if (!m_files_to_transfer_queued.empty())
 		{
-			m_files_to_transfer_pending.erase(
-				std::remove_if(m_files_to_transfer_pending.begin(), m_files_to_transfer_pending.end(),
+			m_files_to_transfer_queued.erase(
+				std::remove_if(m_files_to_transfer_queued.begin(), m_files_to_transfer_queued.end(),
 					[](std::shared_ptr<File::FileResponse> const entry)
 					{
 						return entry == nullptr;
 					}),
-				m_files_to_transfer_pending.end()
+				m_files_to_transfer_queued.end()
 						);
 		}
+
+		m_file_upload_mutex.unlock();
+
 	}
+
 }
  
 void FtpClientWin::SendRequest(ftp_request& new_request, ftp_connection::conn_type conn_type)
@@ -609,13 +631,21 @@ void FtpClientWin::SendRequest(ftp_request& new_request, ftp_connection::conn_ty
 void FtpClientWin::OnClose(wxCloseEvent& evt)
 {
 	running = false;
+	
+
 	m_request_thread->Wait();
 
-	/*
-	 *
+	
 	if (m_upload_thread.joinable())
+	{
+		/*
+		 *
+		std::lock_guard<std::mutex> lock(m_upload_request_mutex);
+		uploading = false;
+		m_upload_request_cond.notify_one();
+		 */
 		m_upload_thread.join();
-	 */
+	}
 
 	client.ControlStreamDisconnect();
 	client.DataStreamDisconnect();

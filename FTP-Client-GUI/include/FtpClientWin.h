@@ -19,6 +19,7 @@ public:
 
 private:
 	std::atomic_bool running = true;
+	std::atomic_bool uploading = false;
 	ftp_client client;
 
 	wxPanel* m_panel = nullptr;
@@ -36,7 +37,9 @@ private:
 	wxListCtrl* m_logs_list = nullptr;
 
 	RequestHandlerThread* m_request_thread = nullptr;
-	//std::thread m_upload_thread;
+	std::thread m_upload_thread;
+	std::mutex m_upload_request_mutex;
+	std::condition_variable m_upload_request_cond;
 
 	//std::deque < std::shared_ptr<File::FileResponse>> m_files_to_upload;
 
@@ -44,8 +47,8 @@ private:
 	//std::shared_ptr<File::FileResponse> m_file_transferred = nullptr;
 
 	std::deque <std::shared_ptr<File::FileResponse>> m_files_to_transfer_accepted;
-	std::deque <std::shared_ptr<File::FileResponse>> m_files_to_transfer_pending;
-	std::deque <std::shared_ptr<File::FileResponse>> m_files_to_transfer_unresolved;
+	std::deque <std::shared_ptr<File::FileResponse>> m_files_to_transfer_queued;
+	std::deque <std::shared_ptr<File::FileResponse>> m_files_to_transfer_unaccepted;
 	std::mutex m_file_upload_mutex;
 
 	std::string user_server_directory = "";

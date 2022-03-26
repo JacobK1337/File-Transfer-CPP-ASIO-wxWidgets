@@ -12,7 +12,6 @@ public:
 
 	wxThread::ExitCode Entry()
 	{
-		
 
 		//if there is still a connection, check if there are responses.
 		while(running)

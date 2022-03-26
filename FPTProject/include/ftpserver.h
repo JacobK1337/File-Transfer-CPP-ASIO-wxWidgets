@@ -144,6 +144,7 @@ public:
 		
 		while(server_running)
 		{
+			Sleep(200);
 			for(auto& curr_file : m_files_to_send)
 			{
 				
@@ -151,7 +152,7 @@ public:
 				{
 					ftp_request file_bytes_response;
 					file_bytes_response.header.operation = ftp_request_header::ftp_operation::RETR;
-					std::vector<char> buffer(std::min(static_cast<unsigned long long>(1000000), curr_file->remaining_bytes));
+					std::vector<char> buffer(std::min(static_cast<unsigned long long>(50000000), curr_file->remaining_bytes));
 
 					file_bytes_response.InsertTrivialToBuffer(curr_file->client_file_id);
 
@@ -180,7 +181,8 @@ public:
 
 			//locking the state of the pending vector
 			//to add all pending requests and erase them later
-			//m_file_pending_mutex.lock();
+
+			m_file_pending_mutex.lock();
 
 			for(auto& pending_file : m_files_to_send_pending)
 			{
@@ -189,7 +191,7 @@ public:
 
 			if(!m_files_to_send_pending.empty())
 			{
-				std::cout << "Pending before erase: " << m_files_to_send_pending.size() << "\n";
+				
 				m_files_to_send_pending.erase(
 					std::remove_if(m_files_to_send_pending.begin(), m_files_to_send_pending.end(),
 						[](std::shared_ptr<File::FileResponse> const entry)
@@ -199,10 +201,9 @@ public:
 					m_files_to_send.end()
 							);
 
-				std::cout << "Pending after erase: " << m_files_to_send_pending.size() << "\n";
 			}
 
-			//m_file_pending_mutex.unlock();
+			m_file_pending_mutex.unlock();
 		}
 	}
 
@@ -214,9 +215,11 @@ public:
 			auto new_request = m_received_requests.front();
 			m_received_requests.pop_front();
 
-
 			if (new_request.header.operation == ftp_request_header::ftp_operation::COLLECT_DATA)
 				OnDataRequest(new_request.sender, new_request);
+
+			else if (new_request.header.operation == ftp_request_header::ftp_operation::UPLOAD_DATA)
+				OnUpload(new_request.sender, new_request);
 
 			else if (new_request.header.operation == ftp_request_header::ftp_operation::DISCONNECT)
 				OnDisconnectRequest(new_request.sender);
@@ -234,7 +237,7 @@ private:
 		//saving requested data
 		unsigned long request_hash = ftp_server::HashRequest(client->GetId());
 		data_request_details.insert({ request_hash, std::move(req)});
-		
+
 		ftp_request response;
 		response.header.operation = ftp_request_header::ftp_operation::SERVER_OK;
 		response.InsertTrivialToBuffer(request_hash);
@@ -299,9 +302,13 @@ private:
 
 				auto file_size = std::filesystem::file_size(default_server_path + user_path + "\\" + file_name);
 
+				m_file_pending_mutex.lock();
+
 				m_files_to_send_pending.emplace_back(
 					std::make_shared<File::FileResponse>(std::move(file_src), file_size, file_id, client)
 				);
+
+				m_file_pending_mutex.unlock();
 
 			}
 
@@ -311,6 +318,7 @@ private:
 
 		case ftp_request_header::ftp_operation::STOR:
 			{
+			
 			ftp_request response;
 			response.header.operation = ftp_request_header::ftp_operation::UPLOAD_ACCEPT;
 
@@ -336,33 +344,8 @@ private:
 
 					m_files_uploaded_counter++;
 				}
-
-				
-				/*
-				 *
-			std::string file_name;
-			std::vector<unsigned char> uploaded_file_buffer;
-			std::string user_path;
-
-			data_request.ExtractStringFromBuffer(file_name);
-			data_request.ExtractToVector(uploaded_file_buffer);
-			data_request.ExtractStringFromBuffer(user_path);
-
-			std::ofstream uploaded_file(default_server_path + user_path + "\\" + file_name, std::ios::binary);
-			std::copy(
-				uploaded_file_buffer.cbegin(),
-				uploaded_file_buffer.cend(),
-				std::ostreambuf_iterator<char>(uploaded_file)
-			);
-
-			ftp_request response;
-			response.header.operation = ftp_request_header::ftp_operation::STOR;
-			std::string server_info = "File successfully uploaded!";
-			response.InsertStringToBuffer(server_info);
-
-			data_request_details.erase(data_hash);
-				 */
-			client->Write(response);
+				data_request_details.erase(data_hash);
+				client->Write(response);
 			break;
 			}
 
@@ -394,14 +377,30 @@ private:
 			break;
 			}
 
-
-		case ftp_request_header::ftp_operation::UPLOAD_DATA:
-			{
-				
-			}
 		}
 	}
 
+
+	void OnUpload(std::shared_ptr<ftp_connection> client, ftp_request& req)
+	{
+		
+		int file_id;
+		req.ExtractTrivialFromBuffer(file_id);
+
+		std::vector<char> retrieved_file_buffer;
+		req.ExtractToVector(retrieved_file_buffer);
+
+		m_files_to_save[file_id]->file_dest->write(retrieved_file_buffer.data(), retrieved_file_buffer.size());
+		m_files_to_save[file_id]->remaining_bytes -= retrieved_file_buffer.size();
+		std::cout << "File [" << file_id << "]: bytes remaining -> " << m_files_to_save[file_id]->remaining_bytes << "\n";
+
+		if (m_files_to_save[file_id]->remaining_bytes <= 0)
+		{
+			std::cout << "File uploaded! \n";
+			m_files_to_save.erase(file_id);
+		}
+
+	}
 	void OnDisconnectRequest(std::shared_ptr<ftp_connection> client)
 	{
 
