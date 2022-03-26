@@ -3,6 +3,7 @@
 #include<deque>
 #include"ftp_request.h"
 #include"ftpconnection.h"
+
 class ftp_client
 {
 private:
@@ -64,7 +65,7 @@ public:
 
 		catch(std::exception& e)
 		{
-			std::cout << "Exception: " << e.what() << "\n";
+			std::cerr << "Exception: " << e.what() << "\n";
 			return false;
 		}
 

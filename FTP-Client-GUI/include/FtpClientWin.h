@@ -7,7 +7,7 @@
 #include<filesystem>
 #include<map>
 #include<fstream>
-
+#include<mutex>
 
 class FtpClientWin : public wxFrame
 {
@@ -18,6 +18,9 @@ public:
 	
 
 private:
+	std::atomic_bool running = true;
+	ftp_client client;
+
 	wxPanel* m_panel = nullptr;
 	wxToolBar* m_toolbar;
 	wxDirPickerCtrl* m_save_dir_picker = nullptr;
@@ -31,12 +34,27 @@ private:
 	wxButton* m_save_button = nullptr;
 	wxButton* m_upload_button = nullptr;
 	wxListCtrl* m_logs_list = nullptr;
-	ftp_client client;
+
 	RequestHandlerThread* m_request_thread = nullptr;
+	//std::thread m_upload_thread;
+
+	//std::deque < std::shared_ptr<File::FileResponse>> m_files_to_upload;
+
+	//user can only transfer one file, so in order to upload more files user should zip it.
+	//std::shared_ptr<File::FileResponse> m_file_transferred = nullptr;
+
+	std::deque <std::shared_ptr<File::FileResponse>> m_files_to_transfer_accepted;
+	std::deque <std::shared_ptr<File::FileResponse>> m_files_to_transfer_pending;
+	std::deque <std::shared_ptr<File::FileResponse>> m_files_to_transfer_unresolved;
+	std::mutex m_file_upload_mutex;
 
 	std::string user_server_directory = "";
 	std::vector<std::shared_ptr<File::FileDetails>> m_file_details;
 	std::map<File::file_type, int> m_file_icons;
+
+	//std::vector<std::shared_ptr<File::FileRequest>> m_requested_files;
+	std::map<unsigned int, std::shared_ptr<File::FileRequest>> m_requested_files;
+	int m_req_files_counter = 0;
 
 	//GUI items setters
 	void SetupToolbar();
@@ -62,8 +80,9 @@ private:
 	void ChangeDirectory(std::string& path);
 	void SaveSelectedFiles();
 	void RemoveSelectedFiles();
-	void InsertSelectedToRequest(ftp_request& request) const;
+	//void InsertSelectedToRequest(ftp_request& request);
 	void UploadFile();
+	void SendFileBytes();
 
 	//Thread action
 	void SendRequest(ftp_request& new_request, ftp_connection::conn_type conn_type);

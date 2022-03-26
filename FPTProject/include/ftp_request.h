@@ -1,9 +1,8 @@
 #pragma once
-#include<asio.hpp>
 #include <filesystem>
-#include<asio/ts/internet.hpp>
+#include<fstream>
 #include<vector>
-
+#include<iostream>
 
 class ftp_connection;
 
@@ -26,7 +25,12 @@ struct ftp_request_header
 
 		//server verification responses
 		SERVER_OK,
-		SERVER_ERROR
+		SERVER_ERROR,
+
+		//upload file headers
+		UPLOAD_ACCEPT,
+		UPLOAD_REJECT,
+		UPLOAD_DATA
 	};
 
 	ftp_operation operation;
@@ -156,6 +160,8 @@ struct ftp_request
 		);
 
 		mem_buffer.erase(mem_buffer.cbegin(), mem_buffer.cbegin() + file_size);
+
+		header.request_size = GetSize();
 	}
 };
 
@@ -169,7 +175,7 @@ namespace File
 
 	struct FileDetails
 	{
-	public:
+	
 		std::string file_name;
 		std::size_t file_size;
 		file_type type;
@@ -178,6 +184,32 @@ namespace File
 			: file_name(std::move(t_file_name)), file_size(t_file_size), type(t_type) {}
 	};
 
+	struct FileRequest
+	{
+		std::shared_ptr<std::ofstream> file_dest;
+		std::string file_name;
+		const std::size_t file_size = 0;
+		std::size_t remaining_bytes;
+		FileRequest() {}
+		FileRequest(std::shared_ptr<std::ofstream> t_file_dest, std::size_t t_file_size, std::string& t_file_name)
+		:  file_dest(std::move(t_file_dest)), file_size(t_file_size), remaining_bytes(t_file_size), file_name(t_file_name)
+		{
+		}
+	};
+
+	struct FileResponse
+	{
+		int client_file_id;
+		std::shared_ptr<std::ifstream> file_src;
+		std::size_t remaining_bytes;
+		std::shared_ptr<ftp_connection> receiver;
+		FileResponse() {}
+		FileResponse(std::shared_ptr<std::ifstream> t_file_src, std::size_t t_file_size, int t_file_id, std::shared_ptr<ftp_connection> t_rec = nullptr)
+		:  file_src(std::move(t_file_src)), remaining_bytes(t_file_size), client_file_id(t_file_id), receiver(std::move(t_rec))
+		{
+			
+		}
+	};
 	static void InsertFileDetails(ftp_request& request, std::string& file_name, std::size_t& file_size, file_type& f_type)
 	{
 		request.InsertStringToBuffer(file_name);

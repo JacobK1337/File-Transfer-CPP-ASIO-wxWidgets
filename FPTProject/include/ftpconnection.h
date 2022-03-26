@@ -2,9 +2,6 @@
 #include<asio.hpp>
 #include<deque>
 #include"ftp_request.h"
-
-
-
 class ftp_connection : public std::enable_shared_from_this<ftp_connection>
 {
 

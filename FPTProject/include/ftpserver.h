@@ -5,6 +5,7 @@
 #include"ftpconnection.h"
 #include<fstream>
 #include<map>
+#include<mutex>
 
 class ftp_server
 {
@@ -14,15 +15,27 @@ private:
 
 	std::vector<std::shared_ptr<ftp_connection>> m_established_connections;
 
+	std::deque < std::shared_ptr<File::FileResponse>> m_files_to_send;
+	std::deque <std::shared_ptr<File::FileResponse>> m_files_to_send_pending;
+
+	std::map <unsigned int, std::shared_ptr<File::FileRequest>> m_files_to_save;
+	unsigned int m_files_uploaded_counter = 0;
+
+	std::atomic_bool server_running = false;
+
 	asio::io_context m_server_context;
 
 	std::thread m_context_thread;
+
+	std::thread m_file_send_thread;
 
 	asio::ip::tcp::acceptor m_server_acceptor;
 
 	std::string default_server_path = std::filesystem::current_path().string();
 
 	std::map<unsigned long, ftp_request> data_request_details;
+
+	std::mutex m_file_pending_mutex;
 
 public:
 	ftp_server(uint16_t port)
@@ -36,14 +49,23 @@ public:
 
 	void Start()
 	{
+
 		try
 		{
+			server_running = true;
 			AsyncAcceptClient();
 
 			m_context_thread = std::thread(
 				[this]() -> void
 				{
 					m_server_context.run();
+				}
+			);
+
+			m_file_send_thread = std::thread(
+				[this]() -> void
+				{
+					SendFileBytes();
 				}
 			);
 		}
@@ -58,10 +80,14 @@ public:
 
 	void Stop()
 	{
+		server_running = false;
 		m_server_context.stop();
 
 		if (m_context_thread.joinable())
 			m_context_thread.join();
+
+		if (m_file_send_thread.joinable())
+			m_file_send_thread.join();
 
 		std::cout << "Server stopped \n";
 
@@ -112,6 +138,74 @@ public:
 		m_client_conn->StartReading();
 	}
 
+
+	void SendFileBytes()
+	{
+		
+		while(server_running)
+		{
+			for(auto& curr_file : m_files_to_send)
+			{
+				
+				if(curr_file->receiver->IsSocketOpen())
+				{
+					ftp_request file_bytes_response;
+					file_bytes_response.header.operation = ftp_request_header::ftp_operation::RETR;
+					std::vector<char> buffer(std::min(static_cast<unsigned long long>(1000000), curr_file->remaining_bytes));
+
+					file_bytes_response.InsertTrivialToBuffer(curr_file->client_file_id);
+
+					curr_file->file_src->read(buffer.data(), buffer.size());
+
+					curr_file->remaining_bytes -= buffer.size();
+
+					file_bytes_response.CopyFromVector(buffer);
+
+					curr_file->receiver->Write(file_bytes_response);
+				}
+			}
+
+
+			if(!m_files_to_send.empty())
+			{
+				m_files_to_send.erase(
+					std::remove_if(m_files_to_send.begin(), m_files_to_send.end(),
+						[](std::shared_ptr<File::FileResponse> const entry)
+						{
+							return entry->remaining_bytes <= 0 || !entry->receiver->IsSocketOpen();
+						}),
+					m_files_to_send.end()
+				);
+			}
+
+			//locking the state of the pending vector
+			//to add all pending requests and erase them later
+			//m_file_pending_mutex.lock();
+
+			for(auto& pending_file : m_files_to_send_pending)
+			{
+				m_files_to_send.push_back(std::move(pending_file));
+			}
+
+			if(!m_files_to_send_pending.empty())
+			{
+				std::cout << "Pending before erase: " << m_files_to_send_pending.size() << "\n";
+				m_files_to_send_pending.erase(
+					std::remove_if(m_files_to_send_pending.begin(), m_files_to_send_pending.end(),
+						[](std::shared_ptr<File::FileResponse> const entry)
+						{
+							return entry == nullptr;
+						}),
+					m_files_to_send.end()
+							);
+
+				std::cout << "Pending after erase: " << m_files_to_send_pending.size() << "\n";
+			}
+
+			//m_file_pending_mutex.unlock();
+		}
+	}
+
 	void CheckForRequests()
 	{
 		while(!m_received_requests.empty())
@@ -140,7 +234,7 @@ private:
 		//saving requested data
 		unsigned long request_hash = ftp_server::HashRequest(client->GetId());
 		data_request_details.insert({ request_hash, std::move(req)});
-
+		
 		ftp_request response;
 		response.header.operation = ftp_request_header::ftp_operation::SERVER_OK;
 		response.InsertTrivialToBuffer(request_hash);
@@ -195,25 +289,57 @@ private:
 			while (!data_request.mem_buffer.empty())
 			{
 				std::string file_name;
-
+				int file_id;
+				data_request.ExtractTrivialFromBuffer(file_id);
 				data_request.ExtractStringFromBuffer(file_name);
 
-				std::ifstream file_binary(default_server_path + user_path + "\\" + file_name, std::ios::binary);
 
-				response.InsertStringToBuffer(file_name);
+				std::shared_ptr<std::ifstream> file_src = 
+					std::make_shared<std::ifstream>(default_server_path + user_path + "\\" + file_name, std::ios::binary);
 
-				std::vector<unsigned char> file_binary_buffer(std::istreambuf_iterator<char>(file_binary), {});
+				auto file_size = std::filesystem::file_size(default_server_path + user_path + "\\" + file_name);
 
-				response.CopyFromVector(file_binary_buffer);
+				m_files_to_send_pending.emplace_back(
+					std::make_shared<File::FileResponse>(std::move(file_src), file_size, file_id, client)
+				);
+
 			}
 
 			data_request_details.erase(data_hash);
-			client->Write(response);
 			break;
 			}
 
 		case ftp_request_header::ftp_operation::STOR:
 			{
+			ftp_request response;
+			response.header.operation = ftp_request_header::ftp_operation::UPLOAD_ACCEPT;
+
+			std::string user_path;
+			data_request.ExtractStringFromBuffer(user_path);
+
+				while(data_request.header.request_size > 0)
+				{
+					std::string file_name;
+					uintmax_t file_size;
+					data_request.ExtractStringFromBuffer(file_name);
+					data_request.ExtractTrivialFromBuffer(file_size);
+
+					std::shared_ptr<std::ofstream> file_dest =
+						std::make_shared<std::ofstream>(default_server_path + user_path + "\\" + file_name, std::ios::binary);
+
+					m_files_to_save.insert({
+						m_files_uploaded_counter,
+							std::make_shared<File::FileRequest>(std::move(file_dest), file_size, file_name)
+						});
+
+					response.InsertTrivialToBuffer(m_files_uploaded_counter);
+
+					m_files_uploaded_counter++;
+				}
+
+				
+				/*
+				 *
 			std::string file_name;
 			std::vector<unsigned char> uploaded_file_buffer;
 			std::string user_path;
@@ -235,9 +361,12 @@ private:
 			response.InsertStringToBuffer(server_info);
 
 			data_request_details.erase(data_hash);
+				 */
 			client->Write(response);
 			break;
 			}
+
+
 		case ftp_request_header::ftp_operation::DELE:
 			{
 			std::string user_path;
@@ -265,6 +394,11 @@ private:
 			break;
 			}
 
+
+		case ftp_request_header::ftp_operation::UPLOAD_DATA:
+			{
+				
+			}
 		}
 	}
 
