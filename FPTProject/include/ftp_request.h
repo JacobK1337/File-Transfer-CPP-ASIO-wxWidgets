@@ -12,25 +12,26 @@ struct ftp_request_header
 	enum class ftp_operation : uint32_t
 	{
 		//FTP operations
-		STOR,
-		DELE,
-		RETR,
-		CD,
+		UPLOAD_FILE,
+		DELETE_FILE,
+		DOWNLOAD_FILE,
+		CHANGE_DIRECTORY,
 
 		//connection operations
 		DISCONNECT,
 
-		//verification
-		COLLECT_DATA,
+		//verified request on data connection
+		DATA_STREAM_VERIFIED,
 
 		//server verification responses
 		SERVER_OK,
 		SERVER_ERROR,
 
-		//upload file headers
+		//upload file operations
 		UPLOAD_ACCEPT,
 		UPLOAD_REJECT,
-		UPLOAD_DATA
+		UPLOAD_DATA,
+		UPLOAD_FINISHED
 	};
 
 	ftp_operation operation;
@@ -44,7 +45,6 @@ struct ftp_request
 	ftp_request_header header;
 	std::vector<unsigned char> mem_buffer;
 	std::shared_ptr<ftp_connection> sender = nullptr;
-
 
 	ftp_request() = default;
 
@@ -173,6 +173,8 @@ namespace File
 		FILE
 	};
 
+	//information about files
+	//used in client application
 	struct FileDetails
 	{
 	
@@ -184,32 +186,38 @@ namespace File
 			: file_name(std::move(t_file_name)), file_size(t_file_size), type(t_type) {}
 	};
 
-	struct FileRequest
+	//file that is being downloaded from client/server
+	struct FileRemote
 	{
 		std::shared_ptr<std::ofstream> file_dest;
 		std::string file_name;
 		const std::size_t file_size = 0;
 		std::size_t remaining_bytes;
-		FileRequest() {}
-		FileRequest(std::shared_ptr<std::ofstream> t_file_dest, std::size_t t_file_size, std::string& t_file_name)
-		:  file_dest(std::move(t_file_dest)), file_size(t_file_size), remaining_bytes(t_file_size), file_name(t_file_name)
+		std::shared_ptr<ftp_connection> sender;
+		FileRemote() {}
+		FileRemote(std::shared_ptr<std::ofstream> t_file_dest, std::size_t t_file_size, std::string& t_file_name, std::shared_ptr<ftp_connection> t_sen = nullptr)
+		:  file_dest(std::move(t_file_dest)), file_size(t_file_size), remaining_bytes(t_file_size), file_name(t_file_name), sender(t_sen)
 		{
 		}
 	};
 
-	struct FileResponse
+	//file that is being uploaded to client/server
+	struct FileLocal
 	{
 		int client_file_id;
 		std::shared_ptr<std::ifstream> file_src;
 		std::size_t remaining_bytes;
 		std::shared_ptr<ftp_connection> receiver;
-		FileResponse() {}
-		FileResponse(std::shared_ptr<std::ifstream> t_file_src, std::size_t t_file_size, int t_file_id, std::shared_ptr<ftp_connection> t_rec = nullptr)
+		FileLocal() {}
+		FileLocal(std::shared_ptr<std::ifstream> t_file_src, std::size_t t_file_size, int t_file_id, std::shared_ptr<ftp_connection> t_rec = nullptr)
 		:  file_src(std::move(t_file_src)), remaining_bytes(t_file_size), client_file_id(t_file_id), receiver(std::move(t_rec))
 		{
 			
 		}
 	};
+
+
+	//helper methods to ease inserting/extracting file details from requests
 	static void InsertFileDetails(ftp_request& request, std::string& file_name, std::size_t& file_size, file_type& f_type)
 	{
 		request.InsertStringToBuffer(file_name);

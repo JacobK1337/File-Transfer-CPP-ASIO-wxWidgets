@@ -19,7 +19,7 @@ public:
 
 private:
 	std::atomic_bool running = true;
-	std::atomic_bool uploading = false;
+	std::atomic_bool quit_uploading = false;
 	ftp_client client;
 
 	wxPanel* m_panel = nullptr;
@@ -28,10 +28,8 @@ private:
 	wxFilePickerCtrl* m_send_file_picker = nullptr;
 	wxListCtrl* m_server_files_list = nullptr;
 
-	//
 	wxImageList* m_file_image_list = nullptr;
-	//
-
+	
 	wxButton* m_save_button = nullptr;
 	wxButton* m_upload_button = nullptr;
 	wxListCtrl* m_logs_list = nullptr;
@@ -41,23 +39,22 @@ private:
 	std::mutex m_upload_request_mutex;
 	std::condition_variable m_upload_request_cond;
 
-	//std::deque < std::shared_ptr<File::FileResponse>> m_files_to_upload;
-
-	//user can only transfer one file, so in order to upload more files user should zip it.
-	//std::shared_ptr<File::FileResponse> m_file_transferred = nullptr;
-
-	std::deque <std::shared_ptr<File::FileResponse>> m_files_to_transfer_accepted;
-	std::deque <std::shared_ptr<File::FileResponse>> m_files_to_transfer_queued;
-	std::deque <std::shared_ptr<File::FileResponse>> m_files_to_transfer_unaccepted;
+	std::deque <std::shared_ptr<File::FileLocal>> m_files_to_transfer_accepted;
+	std::deque <std::shared_ptr<File::FileLocal>> m_files_to_transfer_queued;
+	std::deque <std::shared_ptr<File::FileLocal>> m_files_to_transfer_unaccepted;
 	std::mutex m_file_upload_mutex;
 
 	std::string user_server_directory = "";
+	std::string user_server_directory_pending = "";
+
 	std::vector<std::shared_ptr<File::FileDetails>> m_file_details;
 	std::map<File::file_type, int> m_file_icons;
 
-	//std::vector<std::shared_ptr<File::FileRequest>> m_requested_files;
-	std::map<unsigned int, std::shared_ptr<File::FileRequest>> m_requested_files;
+	std::map<unsigned int, std::shared_ptr<File::FileRemote>> m_requested_files;
 	int m_req_files_counter = 0;
+
+	const unsigned long long MAX_BANDWIDTH = 100000000; //100MB per packet
+
 
 	//GUI items setters
 	void SetupToolbar();
@@ -83,7 +80,6 @@ private:
 	void ChangeDirectory(std::string& path);
 	void SaveSelectedFiles();
 	void RemoveSelectedFiles();
-	//void InsertSelectedToRequest(ftp_request& request);
 	void UploadFile();
 	void SendFileBytes();
 

@@ -20,15 +20,15 @@ public:
 	};
 
 
-	ftp_connection(conn_type t_connType, 
-		conn_founder t_connFounder, 
-		asio::ip::tcp::socket t_connSocket,
-		asio::io_context& t_connContext,
-		std::deque<ftp_request>& t_founderRequests)
-			: m_conn_socket(std::move(t_connSocket)), m_conn_context(t_connContext), m_recieved_requests(t_founderRequests)
+	ftp_connection(conn_type t_conn_type, 
+		conn_founder t_conn_founder, 
+		asio::ip::tcp::socket t_conn_socket,
+		asio::io_context& t_conn_context,
+		std::deque<ftp_request>& t_received_requests)
+			: m_conn_socket(std::move(t_conn_socket)), m_conn_context(t_conn_context), m_recieved_requests(t_received_requests)
 	{
-		m_conn_type = t_connType;
-		m_conn_founder = t_connFounder;
+		m_conn_type = t_conn_type;
+		m_conn_founder = t_conn_founder;
 	}
 
 
