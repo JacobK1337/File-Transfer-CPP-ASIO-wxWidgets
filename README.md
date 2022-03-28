@@ -10,7 +10,7 @@
 ## The basics
 #### When it comes to sending requests and data or connecting to the server, it happens asynchronously. Asio provides many asynchronous features such as: *async_connect, async_accept, async_write, async_read*. I will not describe in detail how these functions work. You can read everything in the Asio documentation. At the moment, it is important that the names of these functions actually reflect very well what they actually do.
 #### Establishing connection is pretty simple - client connects to the server (*async_connect*) and the server accepts client (*async_accept*). If connecting was successful, server creates a *connection* object which allows it to send responses to the client (*async_write*).
-#### In the background, the received responses are asynchronously loaded (*async_read*), while checking whether they were actually received works iteratively. With the help of conditional variables and mutexes from STL, it's not that resource-intensive.
+#### In the background, the received responses are asynchronously loaded (*async_read*), while checking whether they were actually received works iteratively. With the help of conditional variables and mutexes, it's not that resource-intensive.
 ## Requests and data
 #### All information is sent in packets containing the header and the transmitted data in binary form.
 #### Client requests are sent over the control connection, while data transfer from or to the server takes place over the data connection, so basically client tries to establish two connections at the start.
@@ -21,4 +21,13 @@
 ##
 #### Of course, a bit more things are happening in the app than described above. In any case, I think that's enough information anyway to know how it works more or less.
 # Presentation
-//todo, gifs, etc.
+#### For the purposes of the presentation, I installed Windows 10 on a virtual machine that acts as a server, while on my actual system I use a client application. In other words, the data transfer goes between the virtual machine and the host.  
+
+## Browsing the server files
+//
+## Downloading files
+//
+## Uploading files
+//
+## Deleting files
+
